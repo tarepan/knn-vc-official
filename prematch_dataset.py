@@ -96,12 +96,21 @@ def get_full_features(path, wavlm, device):
 
 
 def fast_cosine_dist(source_feats, matching_pool):
-    source_norms = torch.norm(source_feats, p=2, dim=-1)
+    """
+    Args:
+        source_feats
+        matching_pool
+    Returns:
+
+    """
+
+    source_norms   = torch.norm(source_feats,  p=2, dim=-1)
     matching_norms = torch.norm(matching_pool, p=2, dim=-1)
     dotprod = -torch.cdist(source_feats[None], matching_pool[None], p=2)[0]**2 + source_norms[:, None]**2 + matching_norms[None]**2
     dotprod /= 2
 
     dists = 1 - ( dotprod / (source_norms[:, None] * matching_norms[None]) )
+
     return dists
 
 
