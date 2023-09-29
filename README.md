@@ -83,16 +83,14 @@ Install `librosa`, `tensorboard`, `matplotlib`, `fastprogress` and `scipy`.
                             [--resume]
     ```
 
-    where you can specify `--prematch` or not to determine whether to use prematching when generating features or not. For example, to generate the dataset used to train the prematched HiFiGAN from the paper:
+    e.g. (prematch):
     `python prematch_dataset.py --librispeech_path /path/to/librispeech/root --out_path /path/where/you/want/outputs/to/go --topk 4 --matching_layer 6 --synthesis_layer 6 --prematch`
 
-2. **Train HiFiGAN**: we adapt the training script from the [original HiFiGAN repo](https://github.com/jik876/hifi-gan) to work for WavLM features in `hifigan/train.py`. To train a hifigan model on the features you produced above:
+2. **Train HiFiGAN**: until 2.5M steps
 
     ```bash
     python -m hifigan.train --audio_root_path /path/to/librispeech/root/ --feature_root_path /path/to/the/output/of/previous/step/ --input_training_file data_splits/wavlm-hifigan-train.csv --input_validation_file data_splits/wavlm-hifigan-valid.csv --checkpoint_path /path/where/you/want/to/save/checkpoint --fp16 False --config hifigan/config_v1_wavlm.json --stdout_interval 25 --training_epochs 1800 --fine_tuning
     ```
-
-    That's it! Once it is run up till 2.5M updates (or it starts to sound worse) you can stop training and use the pretrained checkpoint.
 
 
 ## Results
