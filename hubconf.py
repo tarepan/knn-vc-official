@@ -25,6 +25,8 @@ def knn_vc(pretrained=True, progress=True, prematched=True, device='cuda') -> KN
     wavlm = wavlm_large(pretrained, progress, device)
     knnvc = KNeighborsVC(wavlm, hifigan, hifigan_cfg, device)
 
+    print(f"{"pretrained" if pretrained else "Initialized"} kNN-VC {"prematched" if prematched else "pure"} WavLM-L6 model is loaded.")
+
     return knnvc
 
 
@@ -53,8 +55,6 @@ def hifigan_wavlm(pretrained=True, progress=True, prematched=True, device='cuda'
     model.eval()
     model.remove_weight_norm()
 
-    print(f"[HiFiGAN] Generator loaded with {sum([p.numel() for p in model.parameters()]):,d} parameters.")
-
     return model, h
 
 
@@ -81,7 +81,5 @@ def wavlm_large(pretrained: bool = True, progress: bool = True, device: str = 'c
     # Switch modes
     model = model.to(device)
     model.eval()
-
-    print(f"WavLM-Large loaded with {sum([p.numel() for p in model.parameters()]):,d} parameters.")
 
     return model

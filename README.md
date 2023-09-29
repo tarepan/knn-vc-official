@@ -56,26 +56,17 @@ Options:
 - `torch.hub.load`
   - `prematched`: bool - Whether to use prematched model or non-prematched model
 
-Note: the target speaker from `ref_wav_paths` _can be anything_, but should be clean speech from the desired speaker.  
-The longer the cumulative duration of all reference waveforms, the better the quality will be (but the slower it will take to run).  
-The improvement in quality diminishes beyond 5 minutes of reference speech.  
 
 #### Checkpoints
 
 Under the releases tab of this repo we provide three checkpoints:
 
-- The frozen WavLM encoder taken from the [original WavLM authors](https://github.com/microsoft/unilm/tree/master/wavlm), which we host here for convenience and torch hub integration.
-- The HiFiGAN vocoder trained on layer 6 of WavLM features.
-- The HiFiGAN vocoder trained on **prematched** layer 6 of WavLM features (the best model in the paper).
+- Encoder: WavLM (taken from [official WavLM](https://github.com/microsoft/unilm/tree/master/wavlm))
+- Vocoder 1: HiFiGAN w/ raw-WavLM-L6
+- Vocoder 2: HiFiGAN w/ prematched-WavLM-L6
 
-For the HiFiGAN models we provide both the generator inference checkpoint and full training checkpoint with optimizer states.
-
-The performance on the LibriSpeech dev-clean set is summarized:
-
-| checkpoint | WER (%) | CER (%) | EER (%) |
-| ----------- | :-----------: | :----: | :--: |
-| [kNN-VC with prematched HiFiGAN](https://github.com/bshall/knn-vc/releases/download/v0.1/prematch_g_02500000.pt) | 6.29 | 2.34 | 35.73 | 
-| [kNN-VC with regular HiFiGAN](https://github.com/bshall/knn-vc/releases/download/v0.1/g_02500000.pt) | 6.39 | 2.41 | 32.55 | 
+For the HiFiGAN models we provide both the generator inference checkpoint and full training checkpoint with optimizer states.  
+For performance, see the paper.  
 
 
 ### Train
