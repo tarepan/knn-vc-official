@@ -22,36 +22,15 @@ def load_wav(full_path):
     return data, sampling_rate
 
 
-def dynamic_range_compression(x, C=1, clip_val=1e-5):
-    return np.log(np.clip(x, a_min=clip_val, a_max=None) * C)
-
-
-def dynamic_range_decompression(x, C=1):
-    return np.exp(x) / C
-
-
-def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
-    return torch.log(torch.clamp(x, min=clip_val) * C)
-
-
-def dynamic_range_decompression_torch(x, C=1):
-    return torch.exp(x) / C
-
-
-def spectral_normalize_torch(magnitudes):
-    output = dynamic_range_compression_torch(magnitudes)
-    return output
-
-
-def spectral_de_normalize_torch(magnitudes):
-    output = dynamic_range_decompression_torch(magnitudes)
-    return output
-
-
 mel_basis = {}
 hann_window = {}
 
 class LogMelSpectrogram(torch.nn.Module):
+    """Alternative wave-to-logmel (c.f. `mel_spectrogram`).
+    
+    Based on torchaudio's `MelSpectrogram`. 
+    """
+
     def __init__(self, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
         super().__init__()
         self.melspctrogram = torchaudio.transforms.MelSpectrogram(
@@ -72,13 +51,18 @@ class LogMelSpectrogram(torch.nn.Module):
         self.hop_size = hop_size
 
     def forward(self, wav):
+        """Pad-Mel-Clip-Log."""
+
         wav = F.pad(wav, ((self.n_fft - self.hop_size) // 2, (self.n_fft - self.hop_size) // 2), "reflect")
         mel = self.melspctrogram(wav)
         logmel = torch.log(torch.clamp(mel, min=1e-5))
+
         return logmel
 
 
 def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+    """Non-alternative wave-to-mel (c.f. `LogMelSpectrogram`). Pad-STFT-Clip-Mel-Log."""
+
     if torch.min(y) < -1.:
         print('min value is ', torch.min(y))
     if torch.max(y) > 1.:
@@ -90,24 +74,21 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
         mel_basis[str(fmax)+'_'+str(y.device)] = torch.from_numpy(mel).float().to(y.device)
         hann_window[str(y.device)] = torch.hann_window(win_size).to(y.device)
 
-    # print("Padding by", int((n_fft - hop_size)/2), y.shape)
-    # pre-padding
-    n_pad = hop_size - ( y.shape[1] % hop_size )
-    y = F.pad(y.unsqueeze(1), (0, n_pad), mode='reflect').squeeze(1)
-    # print("intermediate:", y.shape)
+    # pre-padding                                                      [Diff] Different method
+    n_pad = hop_size - ( y.shape[1] % hop_size )                     # [Diff] Different method
+    y = F.pad(y.unsqueeze(1), (0, n_pad), mode='reflect').squeeze(1) # [Diff] Different method
 
-    y = F.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
+    y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
     
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[str(y.device)],
                       center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
     spec = spec.abs().clamp_(3e-5)
-    # print("Post: ", y.shape, spec.shape)
 
-    spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
-    spec = spectral_normalize_torch(spec)
+    melspec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
+    logmel = torch.log(torch.clamp(melspec, min=1e-5))
 
-    return spec
+    return logmel
 
 
 def get_dataset_filelist(a):
@@ -119,7 +100,12 @@ def get_dataset_filelist(a):
 class MelDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, n_fft, num_mels,
                  hop_size, win_size, sampling_rate,  fmin, fmax, split=True, shuffle=True, n_cache_reuse=1,
-                 device=None, fmax_loss=None, fine_tuning=False, audio_root_path=None, feat_root_path=None, use_alt_melcalc=False):
+                 device=None, fmax_loss=None, fine_tuning=False, audio_root_path=None, feat_root_path=None, use_alt_melcalc: bool = False): # [Diff] Alias/New Args
+        """
+        Args:
+            use_alt_melcalc -
+        """
+
         self.audio_files = training_files
         if shuffle:
             self.audio_files = self.audio_files.sample(frac=1, random_state=1234)
@@ -140,8 +126,9 @@ class MelDataset(torch.utils.data.Dataset):
         self.fine_tuning = fine_tuning
         self.audio_root_path = Path(audio_root_path)
         self.feat_root_path = Path(feat_root_path)
-        self.alt_melspec = LogMelSpectrogram(n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax)
-        self.use_alt_melcalc = use_alt_melcalc
+
+        self.alt_melspec = LogMelSpectrogram(n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax) # [Diff] Alt melnizer
+        self.use_alt_melcalc = use_alt_melcalc                                                               # [Diff] Alt melnizer
 
     def __getitem__(self, index):
         row = self.audio_files.iloc[index]
@@ -158,7 +145,7 @@ class MelDataset(torch.utils.data.Dataset):
             audio = self.cached_wav
             self._cache_ref_count -= 1
 
-        audio = torch.tensor(audio, dtype=torch.float32)
+        audio = torch.tensor(audio, dtype=torch.float32) # [Diff] Current Tensor-nize
         audio = audio.unsqueeze(0)
 
         if not self.fine_tuning:
@@ -170,12 +157,12 @@ class MelDataset(torch.utils.data.Dataset):
                 else:
                     audio = torch.nn.functional.pad(audio, (0, self.segment_size - audio.size(1)), 'constant')
 
-            if self.use_alt_melcalc:
-                mel = self.alt_melspec(audio)
+            if self.use_alt_melcalc:          # [Diff] Alt melnizer
+                mel = self.alt_melspec(audio) # [Diff] Alt melnizer
             else:
                 mel1 = mel_spectrogram(audio, self.n_fft, self.num_mels,
-                                 self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax,
-                                 center=False)
+                                       self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax,
+                                       center=False)
             
             mel = mel.permute(0, 2, 1) # (1, dim, seq_len) --> (1, seq_len, dim)
         else:
@@ -196,12 +183,13 @@ class MelDataset(torch.utils.data.Dataset):
                     audio = torch.nn.functional.pad(audio, (0, self.segment_size - audio.size(1)), 'constant')
 
 
-        if self.use_alt_melcalc:
-            mel_loss = self.alt_melspec(audio)
+        if self.use_alt_melcalc:               # [Diff] Alt melnizer
+            mel_loss = self.alt_melspec(audio) # [Diff] Alt melnizer
         else:
             mel_loss = mel_spectrogram(audio, self.n_fft, self.num_mels,
-                                   self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss,
-                                   center=False)
+                                       self.sampling_rate, self.hop_size, self.win_size, self.fmin, self.fmax_loss,
+                                       center=False)
+
         return (mel.squeeze(), audio.squeeze(0), str(row.audio_path), mel_loss.squeeze())
 
     def __len__(self):

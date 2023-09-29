@@ -18,7 +18,7 @@ from matcher import KNeighborsVC
 ckpt_base_url = "https://github.com/bshall/knn-vc/releases/download/v0.1"
 
 
-def knn_vc(pretrained=True, progress=True, prematched=True, device='cuda') -> KNeighborsVC:
+def knn_vc(pretrained: bool = True, progress: bool = True, prematched: bool = True, device: str = 'cuda') -> KNeighborsVC:
     """Load kNN-VC inference model. Optionally use vocoder trained on `prematched` data."""
 
     hifigan, hifigan_cfg = hifigan_wavlm(pretrained, progress, prematched, device)
@@ -30,7 +30,7 @@ def knn_vc(pretrained=True, progress=True, prematched=True, device='cuda') -> KN
     return knnvc
 
 
-def hifigan_wavlm(pretrained=True, progress=True, prematched=True, device='cuda') -> HiFiGAN:
+def hifigan_wavlm(pretrained: bool = True, progress: bool = True, prematched: bool = True, device: str = 'cuda') -> HiFiGAN:
     """Load pretrained WavLM-L6 HiFi-GAN vocoder. Optionally use weights trained on `prematched` data."""
 
     # Load configs

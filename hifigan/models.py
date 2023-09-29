@@ -1,9 +1,11 @@
+"""HiFi-GAN, allmost all codes are same as HiFi-GAN official. Expections are noted as [Diff]."""
+
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
-from .utils import init_weights, get_padding
+from .utils import init_weights, get_padding # [Diff] relative import
 
 LRELU_SLOPE = 0.1
 
@@ -76,10 +78,10 @@ class Generator(torch.nn.Module):
     def __init__(self, h):
         super(Generator, self).__init__()
         self.h = h
-        self.lin_pre = nn.Linear(h.hubert_dim, h.hifi_dim)
+        self.lin_pre = nn.Linear(h.hubert_dim, h.hifi_dim) # [Diff] 
         self.num_kernels = len(h.resblock_kernel_sizes)
         self.num_upsamples = len(h.upsample_rates)
-        self.conv_pre = weight_norm(Conv1d(h.hifi_dim, h.upsample_initial_channel, 7, 1, padding=3))
+        self.conv_pre = weight_norm(Conv1d(h.hifi_dim, h.upsample_initial_channel, 7, 1, padding=3)) # [Diff] mel80 -> o_prenet
         resblock = ResBlock1 if h.resblock == '1' else ResBlock2
 
         self.ups = nn.ModuleList()
@@ -100,9 +102,8 @@ class Generator(torch.nn.Module):
         self.conv_post.apply(init_weights)
 
     def forward(self, x):
-        """ `x` as (bs, seq_len, dim), regular hifi assumes input of shape (bs, n_mels, seq_len) """
-        x = self.lin_pre(x)
-        x = x.permute(0, 2, 1) # (bs, seq_len, dim) --> (bs, dim, seq_len)
+        """ `x` :: (B, Frame, Feat) - regular hifi assumes (B, Freq, Frame) """ #              [Diff] Input diff info
+        x = self.lin_pre(x).permute(0, 2, 1) # PreNet :: (B, Frame, Feat) -> (B, Feat, Frame)  [Diff] New PreNet
 
         x = self.conv_pre(x)
         for i in range(self.num_upsamples):
