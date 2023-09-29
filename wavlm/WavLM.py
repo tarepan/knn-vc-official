@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 import torch
-import torch.nn as nn
+from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.nn import LayerNorm
 from .modules import (
@@ -218,6 +218,8 @@ class WavLMConfig:
 
 
 class WavLM(nn.Module):
+    """WavLM model."""
+
     def __init__(
         self,
         cfg: WavLMConfig,
@@ -261,9 +263,7 @@ class WavLM(nn.Module):
 
         self.feature_grad_mult = cfg.feature_grad_mult
 
-        self.mask_emb = nn.Parameter(
-            torch.FloatTensor(cfg.encoder_embed_dim).uniform_()
-        )
+        self.mask_emb = nn.Parameter(torch.FloatTensor(cfg.encoder_embed_dim).uniform_())
 
         self.encoder = TransformerEncoder(cfg)
         self.layer_norm = LayerNorm(self.embed)
@@ -322,14 +322,23 @@ class WavLM(nn.Module):
 
     def extract_features(
         self,
-        source: torch.Tensor,
-        padding_mask: Optional[torch.Tensor] = None,
-        mask: bool = False,
-        ret_conv: bool = False,
-        output_layer: Optional[int] = None,
-        ret_layer_results: bool = False,
+        source:            Tensor,
+        padding_mask:      Tensor | None = None,
+        mask:              bool          = False,
+        ret_conv:          bool          = False,
+        output_layer:      int    | None = None,
+        ret_layer_results: bool          = False,
     ):
+        """Extract WavLM feature series.
+        
+        Args:
+            source :: (Channel, T) - The waveform
+            ret_conv               - Whether to return (intermediate) Conv output as feature series
+            output_layer           - Target transformer layer number (index+1)
+            ret_layer_results      - Whether to return Transformer intermediate layer's feature series
+        """
 
+        # Conv
         if self.feature_grad_mult > 0:
             features = self.feature_extractor(source)
             if self.feature_grad_mult != 1.0:
@@ -338,40 +347,39 @@ class WavLM(nn.Module):
             with torch.no_grad():
                 features = self.feature_extractor(source)
 
+        # Norm
         features = features.transpose(1, 2)
         features = self.layer_norm(features)
 
+        # Masking : (B, T), bool
         if padding_mask is not None:
             padding_mask = self.forward_padding_mask(features, padding_mask)
 
+        # Projection
         if self.post_extract_proj is not None:
             features = self.post_extract_proj(features)
 
+        # Do
         features = self.dropout_input(features)
 
+        # Masking : (B, T), bool
         if mask:
-            x, mask_indices = self.apply_mask(
-                features, padding_mask
-            )
+            x, mask_indices = self.apply_mask(features, padding_mask)
         else:
             x = features
 
-        # feature: (B, T, D), float
-        # target: (B, T), long
-        # x: (B, T, D), float
-        # padding_mask: (B, T), bool
-        # mask_indices: (B, T), bool
-        x, layer_results = self.encoder(
-            x,
-            padding_mask=padding_mask,
-            layer=None if output_layer is None else output_layer - 1
-        )
+        # Transformer - Feature from target layer & Features from intermediate layers
+        x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=None if output_layer is None else output_layer - 1)
 
-        res = {"x": x, "padding_mask": padding_mask, "features": features, "layer_results": layer_results}
+        # feature: (B, T, D), float
+        # x: (B, T, D), float
+
+        res = { "x": x, "padding_mask": padding_mask, "features": features, }
 
         feature = res["features"] if ret_conv else res["x"]
         if ret_layer_results:
-            feature = (feature, res["layer_results"])
+            feature = (feature, layer_results)
+
         return feature, res["padding_mask"]
 
 
@@ -483,6 +491,10 @@ class ConvFeatureExtractionModel(nn.Module):
             pass
 
     def forward(self, x, mask=None):
+        """
+        Args:
+            x :: (Channel, T) - The waveform
+        """
 
         # BxT -> BxCxT
         x = x.unsqueeze(1)
@@ -561,7 +573,15 @@ class TransformerEncoder(nn.Module):
 
         self.apply(init_bert_params)
 
-    def forward(self, x, padding_mask=None, streaming_mask=None, layer=None):
+    def forward(self, x, padding_mask=None, streaming_mask=None, layer: int | None = None):
+        """
+        Args:
+            layer - Target transformer layer index
+        Returns:
+            x             - Feature series from target layer
+            layer_results - Feature series from intermediate layers
+        """
+
         x, layer_results = self.extract_features(x, padding_mask, streaming_mask, layer)
 
         if self.layer_norm_first and layer is None:
@@ -569,7 +589,14 @@ class TransformerEncoder(nn.Module):
 
         return x, layer_results
 
-    def extract_features(self, x, padding_mask=None, streaming_mask=None, tgt_layer=None):
+    def extract_features(self, x, padding_mask=None, streaming_mask=None, tgt_layer: int | None = None):
+        """
+        Args:
+            tgt_layer - Target transformer layer index (None means final layer)
+        Returns:
+            x             - Feature series from target layer
+            layer_results - Feature series from intermediate layers
+        """
 
         if padding_mask is not None:
             x[padding_mask] = 0
@@ -586,19 +613,21 @@ class TransformerEncoder(nn.Module):
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
 
+        # layer_results :: ()[]
         layer_results = []
         z = None
         if tgt_layer is not None:
             layer_results.append((x, z))
         r = None
         pos_bias = None
+        # Apply Layers with LayerDropout
         for i, layer in enumerate(self.layers):
             dropout_probability = np.random.random()
             if not self.training or (dropout_probability > self.layerdrop):
-                x, z, pos_bias = layer(x, self_attn_padding_mask=padding_mask, need_weights=False,
-                                       self_attn_mask=streaming_mask, pos_bias=pos_bias)
+                x, z, pos_bias = layer(x, self_attn_padding_mask=padding_mask, need_weights=False, self_attn_mask=streaming_mask, pos_bias=pos_bias)
             if tgt_layer is not None:
                 layer_results.append((x, z))
+            # Stop at target layer
             if i == tgt_layer:
                 r = x
                 break
