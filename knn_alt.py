@@ -37,6 +37,16 @@ best2 = dists2.topk(k=topk, largest=False, dim=-1)
 out_feats2 = synth_set[best2.indices].mean(dim=1)
 
 
+# Alt2
+import torchmetrics
+
+dists3 = torchmetrics.functional.pairwise_cosine_similarity(query_seq, matching_set)
+best3 = dists3.topk(k=topk, dim=-1)
+out_feats3 = synth_set[best3.indices].mean(dim=1)
+
+
 # Test
-assert torch.allclose(out_feats, out_feats2)
+assert torch.allclose(out_feats,  out_feats2)
+assert torch.allclose(out_feats2, out_feats3)
+assert torch.allclose(out_feats3, out_feats)
 print("passed")
