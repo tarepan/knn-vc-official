@@ -21,25 +21,62 @@ SPEAKER_INFORMATION_LAYER: int = 6 # Layer number of transformer, from which Wav
 SPEAKER_INFORMATION_WEIGHTS = generate_matrix_from_index(SPEAKER_INFORMATION_LAYER)
 
 
-def fast_cosine_dist(source_feats: Tensor, matching_pool: Tensor, device: str = 'cpu') -> Tensor:
+def fast_cosine_dist(source_feats: Tensor, matching_pool: Tensor, device: torch.device) -> Tensor:
     """Like torch.cdist, but fixed dim=-1 and for cosine distance.
     
     Args:
-        source_feats
-        matching_pool
+        source_feats  :: (Frame=frm, Feat=f)
+        matching_pool :: (Choice=c,  Feat=f)
         device
     Returns:
         dists
     """
 
-    source_norms = torch.norm(source_feats, p=2, dim=-1).to(device)
-    matching_norms = torch.norm(matching_pool, p=2, dim=-1)
-    dotprod = -torch.cdist(source_feats[None].to(device), matching_pool[None], p=2)[0]**2 + source_norms[:, None]**2 + matching_norms[None]**2
+    # [Calculation]
+    #     ⟨A,B⟩ = Σab
+    #     ⟨A,B⟩ =  0.5 * -Σ-2ab
+    #          =  0.5 * -Σ{(a-b)^2 - a^2 - b^2}
+    #          =  0.5 * {-Σ(a-b)^2 + Σa^2 + Σb^2}
+    #          =  0.5 * {-[√[Σ(a-b)^2]^2 + √[Σa^2]^2 + √[Σb^2]^2]}
+    #          =  0.5 * {-║A-B║^2 + ║A║^2 + ║B║^2}
+    #
+    #     cosθ = ⟨A,B⟩ / ║A║║B║
+    #          = 0.5 * {-║A-B║^2 + ║A║^2 + ║B║^2} / ║A║║B║
+
+    source_norms   = torch.norm(source_feats,  p=2, dim=-1).to(device) # ║A║
+    matching_norms = torch.norm(matching_pool, p=2, dim=-1)            # ║B║
+    dotprod = -torch.cdist(source_feats[None].to(device), matching_pool[None], p=2)[0]**2 + source_norms[:, None]**2 + matching_norms[None]**2 # ⟨A,B⟩
     dotprod /= 2
 
+    # Inverse range - [0, 1] to [1, 0] for metric by `min`
     dists = 1 - ( dotprod / (source_norms[:, None] * matching_norms[None]) )
 
     return dists
+
+
+def knn(query_series: Tensor, key_pool: Tensor, value_pool: Tensor, topk: int, device: torch.device) -> Tensor:
+    """
+    Replace frames with kNN.
+
+    Args:
+        query_series :: (Frame=frm, Feat=f) - kNN query series which is replaced by value pool elements based on query-key distance
+        key_pool     :: (Choice=c,  Feat=f) - kNN key   pool (distance references)
+        value_pool   :: (Choice=c,  Feat=f) - kNN value pool (will be selected based on query-key distance)
+        topk                                - 'k' in the kNN, the number of nearest neighbors to average over.
+        device                              - Tensor's device
+    Returns:
+                     :: (Frame=frm, Feat=f) - Averaged top-K nearest neighbor
+    """
+    # Measure distances :: (Frame, Feat)(Pool, Feat) -> (Frame, Pool)
+    dists = fast_cosine_dist(query_series, key_pool, device=device)
+
+    # Selection :: (Frame, Topk=topk) - Select topK score's indice ('min' toward inverse cosine distance)
+    best = dists.topk(k=topk, largest=False, dim=-1)
+
+    # Average :: (Frame, Topk=topk) -> (Frame, Topk=topk, Feat) -> (Frame, Feat) - kNN regression
+    average_value_series = value_pool[best.indices].mean(dim=1)
+
+    return average_value_series
 
 
 class KNeighborsVC(nn.Module):
@@ -180,10 +217,8 @@ class KNeighborsVC(nn.Module):
         ## Device
         synth_set, matching_set, query_seq = synth_set.to(device), matching_set.to(device), query_seq.to(device)
 
-        # k-NN - distance/topK
-        dists = fast_cosine_dist(query_seq, matching_set, device=device)
-        best = dists.topk(k=topk, largest=False, dim=-1)
-        out_feats = synth_set[best.indices].mean(dim=1)
+        # kNN :: (Frame, Feat)(Pool, Feat) -> (Frame, Pool) -> (Frame, Feat) - Measure distances and average topK
+        out_feats = knn(query_seq, matching_set, synth_set, topk, device=device)
 
         # Vocoding - unit-to-wave
         prediction = self.vocode(out_feats[None].to(device)).cpu().squeeze()
