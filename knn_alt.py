@@ -38,11 +38,10 @@ out_feats2 = synth_set[best2.indices].mean(dim=1)
 
 
 # Alt2
-import torchmetrics
+from torchmetrics.functional import pairwise_cosine_similarity
 
-dists3 = torchmetrics.functional.pairwise_cosine_similarity(query_seq, matching_set)
-best3 = dists3.topk(k=topk, dim=-1)
-out_feats3 = synth_set[best3.indices].mean(dim=1)
+topk_idx_series = pairwise_cosine_similarity(query_seq, matching_set).topk(k=topk).indices
+out_feats3 = synth_set[topk_idx_series].mean(dim=1)
 
 
 # Test
