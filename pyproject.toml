@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "knnvc"
+version = "1.0.0"
+description = "kNN-VC, simple kNN-based voice conversion"
+authors = ["tarepan"]
+readme = "README.md"
+repository = "https://github.com/tarepan/knn-vc-official"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "^1.22.4"
+tqdm = "4.*"
+## Poetry is not good for version control of PyTorch (it has many many variants for a version, so poetry become confused)
+## torch = "2.0.0"
+## torchaudio = "2.0.1"
+librosa = "^0.10.1"
+
+[tool.poetry.dev-dependencies]
+types-tqdm = "4.*"
+pytest = "7.*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pylint.messages_control]
+disable = [
+  # This is opinionated
+  "line-too-long",
+  "pointless-string-statement",
+  "no-name-in-module", # so many false positive (because of PyTorch...?)
+  "no-member", # so many false positive (because of PyTorch...?)
+]
