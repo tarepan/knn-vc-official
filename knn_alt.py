@@ -40,8 +40,27 @@ out_feats2 = synth_set[best2.indices].mean(dim=1)
 # Alt2
 from torchmetrics.functional import pairwise_cosine_similarity
 
-topk_idx_series = pairwise_cosine_similarity(query_seq, matching_set).topk(k=topk).indices
-out_feats3 = synth_set[topk_idx_series].mean(dim=1)
+def knn_alt2(query_series: Tensor, key_pool: Tensor, value_pool: Tensor, top_k: int) -> Tensor:
+    """Replace frames with kNN.
+
+    Args:
+        query_series :: (Frame=frm, Feat=f) - kNN query series which is replaced by value pool elements based on query-key distance
+        key_pool     :: (Choice=c,  Feat=f) - kNN key   pool (distance references)
+        value_pool   :: (Choice=c,  Feat=f) - kNN value pool (will be selected based on query-key distance)
+        top_k                               - 'k' in the kNN, the number of nearest neighbors to average over.
+    Returns:
+                     :: (Frame=frm, Feat=f) - Averaged top-K nearest neighbor
+    """
+
+    # Q-K Distance / TopK / index :: (Frame, Feat)(Pool, Feat) -> (Frame, Pool) -> (Frame, Topk=topk)
+    topk_idx_series = pairwise_cosine_similarity(query_series, key_pool).topk(k=top_k).indices # type:ignore
+
+    # Q-V replace / Average :: (Pool, Feat)(Frame, Topk=topk) -> (Frame, Topk=topk, Feat) -> (Frame, Feat)
+    replaced_series = value_pool[topk_idx_series].mean(dim=1)                                 # type:ignore
+
+    return replaced_series
+
+out_feats3 = knn_alt2(query_seq, matching_set, synth_set, topk)
 
 
 # Test
