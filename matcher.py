@@ -157,23 +157,21 @@ class KNeighborsVC(nn.Module):
         synth_set:       Tensor | None = None, 
         topk:            int           =    4,
         tgt_loudness_db: float  | None =  -16,
-        target_duration: float  | None = None,
         device:          str    | None = None,
     ) -> Tensor:
         """Given `query_seq`, `matching_set`, and `synth_set` tensors of shape (N, dim), perform kNN regression matching with k=`topk`.
         
         Args:
-            query_seq    :: (N1, dim) - input/source query features
-            matching_set :: (N2, dim) - The matching set from target speaker's utterances
-            synth_set    :: (N2, dim) - corresponding to the matching set. We use the matching set to assign each query
-                                        vector to a vector in the matching set, and then use the corresponding vector from the synth set during HiFiGAN synthesis.
-                                        By default, and for best performance, this should be identical to the matching set.
-            topk                      - k in the kNN -- the number of nearest neighbors to average over.
-            tgt_loudness_db           - Target loudness, normalized to this value [dB]. None means no normalization.
-            target_duration           - if set to a float, interpolate resulting waveform duration to be equal to this value in seconds.
-            device                    - Device for tensors. if None, uses default device at initialization.
+            query_seq    :: (Frame=n1, dim) - input/source query features
+            matching_set :: (Frame=n2, dim) - The matching set from target speaker's utterances
+            synth_set    :: (Frame=n2, dim) - corresponding to the matching set. We use the matching set to assign each query
+                                              vector to a vector in the matching set, and then use the corresponding vector from the synth set during HiFiGAN synthesis.
+                                              By default, and for best performance, this should be identical to the matching set.
+            topk                            - 'k' in the kNN, the number of nearest neighbors to average over.
+            tgt_loudness_db                 - Target loudness, normalized to this value [dB]. None means no normalization.
+            device                          - Device for tensors. if None, uses default device at initialization.
         Returns:
-            -            :: (T,)      - converted waveform
+            -            :: (T,)            - converted waveform
         """
 
         # Preparation
@@ -181,11 +179,6 @@ class KNeighborsVC(nn.Module):
         synth_set = matching_set if synth_set is None else synth_set
         ## Device
         synth_set, matching_set, query_seq = synth_set.to(device), matching_set.to(device), query_seq.to(device)
-
-        if target_duration is not None:
-            target_samples = int(target_duration*self.sr)
-            scale_factor = (target_samples/self.hop_length) / query_seq.shape[0] # n_targ_feats / n_input_feats
-            query_seq = F.interpolate(query_seq.T[None], scale_factor=scale_factor, mode='linear')[0].T
 
         # k-NN - distance/topK
         dists = fast_cosine_dist(query_seq, matching_set, device=device)
