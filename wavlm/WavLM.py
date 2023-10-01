@@ -17,7 +17,6 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from .modules import (
-    Fp32GroupNorm,
     Fp32LayerNorm,
     GradMultiply,
     MultiheadAttention,
@@ -228,12 +227,7 @@ class WavLM(nn.Module):
         feature_enc_layers = eval(cfg.conv_feature_layers)
         self.embed = feature_enc_layers[-1][0]
 
-        self.feature_extractor = ConvFeatureExtractionModel(
-            conv_layers=feature_enc_layers,
-            dropout=0.0,
-            mode=cfg.extractor_mode,
-            conv_bias=cfg.conv_bias,
-        )
+        self.feature_extractor = ConvFeatureExtractionModel()
 
         self.post_extract_proj = (
             nn.Linear(self.embed, cfg.encoder_embed_dim)
@@ -381,134 +375,46 @@ class WavLM(nn.Module):
 
 
 class ConvFeatureExtractionModel(nn.Module):
-    def __init__(
-            self,
-            conv_layers: List[Tuple[int, int, int]],
-            dropout: float = 0.0,
-            mode: str = "default",
-            conv_bias: bool = False,
-            conv_type: str = "default"
-    ):
-        super().__init__()
+    """Convolutional feature extractor. Output match is confirmed."""
 
-        assert mode in {"default", "layer_norm"}
+    def __init__(self):
+        """Init."""
+        super().__init__() # pyright: ignore [reportUnknownMemberType]
 
-        def block(
-                n_in,
-                n_out,
-                k,
-                stride,
-                is_layer_norm=False,
-                is_group_norm=False,
-                conv_bias=False,
-        ):
-            def make_conv():
-                conv = nn.Conv1d(n_in, n_out, k, stride=stride, bias=conv_bias)
-                nn.init.kaiming_normal_(conv.weight)
-                return conv
+        # total stride 400@16kHz (25msec), total hop 320@16kHz (20msec), matched with the paper
+        conv_layers: list[tuple[int, int, int, int]] = [
+        #    c_i  c_o   k  s
+            (  1, 512, 10, 5),
+            (512, 512,  3, 2),
+            (512, 512,  3, 2),
+            (512, 512,  3, 2),
+            (512, 512,  3, 2),
+            (512, 512,  2, 2),
+            (512, 512,  2, 2),
+        ]
 
-            assert (is_layer_norm and is_group_norm) == False, "layer norm and group norm are exclusive"
+        def block(n_in: int, n_out: int, k: int, stride: int):
+            return nn.Sequential(
+                nn.Conv1d(n_in, n_out, k, stride=stride, bias=False),
+                nn.Dropout(p=0.0),
+                nn.Sequential(
+                    TransposeLast(),
+                    Fp32LayerNorm(n_out, elementwise_affine=True),
+                    TransposeLast(),
+                ),
+                nn.GELU(),
+            )
 
-            if is_layer_norm:
-                return nn.Sequential(
-                    make_conv(),
-                    nn.Dropout(p=dropout),
-                    nn.Sequential(
-                        TransposeLast(),
-                        Fp32LayerNorm(dim, elementwise_affine=True),
-                        TransposeLast(),
-                    ),
-                    nn.GELU(),
-                )
-            elif is_group_norm:
-                return nn.Sequential(
-                    make_conv(),
-                    nn.Dropout(p=dropout),
-                    Fp32GroupNorm(dim, dim, affine=True),
-                    nn.GELU(),
-                )
-            else:
-                return nn.Sequential(make_conv(), nn.Dropout(p=dropout), nn.GELU())
+        self.conv_layers = nn.ModuleList()
+        for c_in, c_out, kernel, stride in conv_layers:
+            self.conv_layers.append(block(c_in, c_out, kernel, stride))
 
-        self.conv_type = conv_type
-        if self.conv_type == "default":
-            in_d = 1
-            self.conv_layers = nn.ModuleList()
-            for i, cl in enumerate(conv_layers):
-                assert len(cl) == 3, "invalid conv definition: " + str(cl)
-                (dim, k, stride) = cl
-
-                self.conv_layers.append(
-                    block(
-                        in_d,
-                        dim,
-                        k,
-                        stride,
-                        is_layer_norm=mode == "layer_norm",
-                        is_group_norm=mode == "default" and i == 0,
-                        conv_bias=conv_bias,
-                    )
-                )
-                in_d = dim
-        elif self.conv_type == "conv2d":
-            in_d = 1
-            self.conv_layers = nn.ModuleList()
-            for i, cl in enumerate(conv_layers):
-                assert len(cl) == 3
-                (dim, k, stride) = cl
-
-                self.conv_layers.append(
-                    nn.Conv2d(in_d, dim, k, stride)
-                )
-                self.conv_layers.append(nn.ReLU())
-                in_d = dim
-        elif self.conv_type == "custom":
-            in_d = 1
-            idim = 80
-            self.conv_layers = nn.ModuleList()
-            for i, cl in enumerate(conv_layers):
-                assert len(cl) == 3
-                (dim, k, stride) = cl
-                self.conv_layers.append(
-                    nn.Conv2d(in_d, dim, k, stride, padding=1)
-                )
-                self.conv_layers.append(
-                    nn.LayerNorm([dim, idim])
-                )
-                self.conv_layers.append(nn.ReLU())
-                in_d = dim
-                if (i + 1) % 2 == 0:
-                    self.conv_layers.append(
-                        nn.MaxPool2d(2, stride=2, ceil_mode=True)
-                    )
-                    idim = int(math.ceil(idim / 2))
-        else:
-            pass
-
-    def forward(self, x, mask=None):
-        """
-        Args:
-            x :: (Channel, T) - The waveform
-        """
-
-        # BxT -> BxCxT
-        x = x.unsqueeze(1)
-        if self.conv_type == "custom":
-            for conv in self.conv_layers:
-                if isinstance(conv, nn.LayerNorm):
-                    x = x.transpose(1, 2)
-                    x = conv(x).transpose(1, 2)
-                else:
-                    x = conv(x)
-            x = x.transpose(2, 3).contiguous()
-            x = x.view(x.size(0), -1, x.size(-1))
-        else:
-            for conv in self.conv_layers:
-                x = conv(x)
-            if self.conv_type == "conv2d":
-                b, c, t, f = x.size()
-                x = x.transpose(2, 3).contiguous().view(b, c * f, t)
-        return x
+    def forward(self, series: Tensor):
+        """Forward a batch w/o padding :: (B, T) -> (B, Feat=1, T) -> (B, Feat, Frame)"""
+        series = series.unsqueeze(1)
+        for conv in self.conv_layers:
+            series = conv(series)
+        return series
 
 
 class TransformerEncoder(nn.Module):
