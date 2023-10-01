@@ -27,6 +27,24 @@ from .modules import (
 logger = logging.getLogger(__name__)
 
 
+def pad_for_wavlm(wave: Tensor) -> Tensor:
+    """Same padding with frame centering.
+
+    Args:
+        wave :: (..., T=t)     - Waveform
+    Returns:
+             :: (..., T=l+t+r) - Padded waveform
+    """
+
+    kernel, hop = 400, 320
+    padding_total = kernel - hop
+    padding_l = padding_total // 2
+    padding_r = padding_total - padding_l
+    padded_wave = F.pad(wave, (padding_l, padding_r), mode="constant")
+
+    return padded_wave
+
+
 class WavLMConfig:
     def __init__(self, cfg=None):
         self.extractor_mode: str = "default"     # mode for feature extractor. default has a single group norm with d groups in the first conv block, whereas layer_norm has layer norms in every block (meant to use with normalize=True)

@@ -1,11 +1,13 @@
 dependencies = ['torch', 'torchaudio', 'numpy']
 
-import torch
+from typing import Callable
 import json
 from pathlib import Path
 
+import torch
+from torch import Tensor
 
-from wavlm.WavLM import WavLM, WavLMConfig
+from wavlm.WavLM import WavLM, WavLMConfig, pad_for_wavlm
 from hifigan.models import Generator as HiFiGAN
 from hifigan.utils import AttrDict
 from matcher import KNeighborsVC
@@ -79,3 +81,8 @@ def wavlm_large(pretrained: bool = True, progress: bool = True, device: str = 'c
     model.eval()
 
     return model
+
+
+def pad_wavlm() -> Callable[[Tensor], Tensor]:
+    """Padding utility function for `wavlm_large`."""
+    return pad_for_wavlm
