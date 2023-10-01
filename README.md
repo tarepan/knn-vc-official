@@ -12,9 +12,11 @@ Clone of official kNN-VC, simple kNN-based voice conversion.
 - [Demo](#demo)
 - [Usage](#usage)
   - [Install](#install)
-  - [Train](#train)
   - [Inference](#inference)
+    - [Checkpoints](#checkpoints)
+  - [Train](#train)
 - [Results](#results)
+- [Official info](#official-info)
 - [References](#references)
 
 ![kNN-VC method](./knn-vc.png)
@@ -40,7 +42,7 @@ import torch, torchaudio
 src_wav_path = '<path to arbitrary 16kHz waveform>.wav'
 ref_wav_paths = ['<path to arbitrary 16kHz waveform from target speaker>.wav', '<path to 2nd utterance from target speaker>.wav', ...]
 
-knn_vc = torch.hub.load('bshall/knn-vc', 'knn_vc', prematched=True, trust_repo=True, pretrained=True)
+knn_vc = torch.hub.load('tarepan/knn-vc-official', 'knn_vc', prematched=True, trust_repo=True, pretrained=True)
 
 query_seq = knn_vc.get_features(src_wav_path)
 matching_set = knn_vc.get_matching_set(ref_wav_paths)
