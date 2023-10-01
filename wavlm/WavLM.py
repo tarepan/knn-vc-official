@@ -11,6 +11,7 @@ import math
 import logging
 
 import numpy as np
+import torch
 from torch import nn, Tensor, FloatTensor
 import torch.nn.functional as F
 from .modules import (
@@ -108,7 +109,7 @@ class WavLM(nn.Module):
         """Not used."""
         raise RuntimeError("Not implemented.")
 
-    def extract_features(self, source: Tensor, output_layer: int | None = None) -> tuple[Tensor, Tensor, Tensor]:
+    def extract_features(self, source: Tensor, output_layer: int | None = None, conv_only: bool = False) -> tuple[Tensor, Tensor, Tensor]:
         """Extract WavLM feature series.
         
         Args:
@@ -125,6 +126,8 @@ class WavLM(nn.Module):
         features = self.layer_norm(features.transpose(1, 2))
         features = self.post_extract_proj(features)
         features = self.dropout_input(features)
+        if conv_only:
+            return features, torch.empty(1), torch.empty(1)
 
         # Transformer :: (B, Frame, Feat) -> (B, Frame, Feat) - Feature from target layer & Features from intermediate layers
         x, layer_results = self.encoder(features, padding_mask=None, layer=None if output_layer is None else output_layer - 1)
