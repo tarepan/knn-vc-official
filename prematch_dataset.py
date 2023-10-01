@@ -89,7 +89,7 @@ def get_full_features(path, wavlm, device):
 
     # extract the representation of each layer
     wav_input_16khz = x.to(device)
-    rep, layer_results = wavlm.extract_features(wav_input_16khz, output_layer=wavlm.cfg.encoder_layers, ret_layer_results=True)[0]
+    _, rep, layer_results = wavlm.extract_features(wav_input_16khz, output_layer=wavlm.cfg.encoder_layers)
     features = torch.cat([x.transpose(0, 1) for x, _ in layer_results], dim=0) # (n_layers, seq_len, dim)
 
     return features

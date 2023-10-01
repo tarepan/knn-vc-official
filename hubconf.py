@@ -21,7 +21,7 @@ def knn_vc(pretrained: bool = True, progress: bool = True, prematched: bool = Tr
     wavlm = wavlm_large(pretrained, progress, device)
     knnvc = KNeighborsVC(wavlm, hifigan, hifigan_cfg, device)
 
-    print(f"{"pretrained" if pretrained else "Initialized"} kNN-VC {"prematched" if prematched else "pure"} WavLM-L6 model is loaded.")
+    print(f"{'pretrained' if pretrained else 'Initialized'} kNN-VC {'prematched' if prematched else 'pure'} WavLM-L6 model is loaded.")
 
     return knnvc
 
@@ -57,7 +57,7 @@ def hifigan_wavlm(pretrained: bool = True, progress: bool = True, prematched: bo
 def wavlm_large(pretrained: bool = True, progress: bool = True, device: str = 'cuda') -> WavLM:
     """Load the WavLM large checkpoint from the original paper. See https://github.com/microsoft/unilm/tree/master/wavlm for details. """
 
-    if torch.cuda.is_available() == False:
+    if not torch.cuda.is_available():
         if str(device) != 'cpu':
             print(f"Overriding device {device} to cpu since no GPU is available.")
             device = 'cpu'

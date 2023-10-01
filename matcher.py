@@ -177,14 +177,14 @@ class KNeighborsVC(nn.Module):
         wav_input_16khz = x.to(self.device)
         if torch.allclose(weights, self.weighting):
             ## :: (Channel, T) -> (B=1, Frame, Feat) -> (Frame, Feat)
-            features = self.wavlm.extract_features(wav_input_16khz, output_layer=SPEAKER_INFORMATION_LAYER, ret_layer_results=False)[0].squeeze(0)
+            features = self.wavlm.extract_features(wav_input_16khz, output_layer=SPEAKER_INFORMATION_LAYER)[1].squeeze(0)
         else:
             # use slower weighted
-            rep, layer_results = self.wavlm.extract_features(wav_input_16khz, output_layer=self.wavlm.cfg.encoder_layers, ret_layer_results=True)[0]
+            _, rep, layer_results = self.wavlm.extract_features(wav_input_16khz, output_layer=self.wavlm.cfg.encoder_layers)
             features = torch.cat([x.transpose(0, 1) for x, _ in layer_results], dim=0) # (n_layers, seq_len, dim)
             # save full sequence
             features = ( features*weights[:, None] ).sum(dim=0) # (seq_len, dim)
-        
+
         return features
 
     @torch.inference_mode()

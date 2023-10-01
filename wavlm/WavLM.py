@@ -9,16 +9,12 @@
 
 import math
 import logging
-from typing import List, Optional, Tuple
 
 import numpy as np
-
-import torch
-from torch import nn, Tensor
+from torch import nn, Tensor, FloatTensor
 import torch.nn.functional as F
 from .modules import (
     Fp32LayerNorm,
-    GradMultiply,
     MultiheadAttention,
     SamePad,
     init_bert_params,
@@ -28,133 +24,6 @@ from .modules import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def compute_mask_indices(
-    shape: Tuple[int, int],
-    padding_mask: Optional[torch.Tensor],
-    mask_prob: float,
-    mask_length: int,
-    mask_type: str = "static",
-    mask_other: float = 0.0,
-    min_masks: int = 0,
-    no_overlap: bool = False,
-    min_space: int = 0,
-) -> np.ndarray:
-    """
-    Computes random mask spans for a given shape
-
-    Args:
-        shape: the the shape for which to compute masks.
-            should be of size 2 where first element is batch size and 2nd is timesteps
-        padding_mask: optional padding mask of the same size as shape, which will prevent masking padded elements
-        mask_prob: probability for each token to be chosen as start of the span to be masked. this will be multiplied by
-            number of timesteps divided by length of mask span to mask approximately this percentage of all elements.
-            however due to overlaps, the actual number will be smaller (unless no_overlap is True)
-        mask_type: how to compute mask lengths
-            static = fixed size
-            uniform = sample from uniform distribution [mask_other, mask_length*2]
-            normal = sample from normal distribution with mean mask_length and stdev mask_other. mask is min 1 element
-            poisson = sample from possion distribution with lambda = mask length
-        min_masks: minimum number of masked spans
-        no_overlap: if false, will switch to an alternative recursive algorithm that prevents spans from overlapping
-        min_space: only used if no_overlap is True, this is how many elements to keep unmasked between spans
-    """
-
-    bsz, all_sz = shape
-    mask = np.full((bsz, all_sz), False)
-
-    all_num_mask = int(
-        # add a random number for probabilistic rounding
-        mask_prob * all_sz / float(mask_length)
-        + np.random.rand()
-    )
-
-    all_num_mask = max(min_masks, all_num_mask)
-
-    mask_idcs = []
-    for i in range(bsz):
-        if padding_mask is not None:
-            sz = all_sz - padding_mask[i].long().sum().item()
-            num_mask = int(
-                # add a random number for probabilistic rounding
-                mask_prob * sz / float(mask_length)
-                + np.random.rand()
-            )
-            num_mask = max(min_masks, num_mask)
-        else:
-            sz = all_sz
-            num_mask = all_num_mask
-
-        if mask_type == "static":
-            lengths = np.full(num_mask, mask_length)
-        elif mask_type == "uniform":
-            lengths = np.random.randint(mask_other, mask_length * 2 + 1, size=num_mask)
-        elif mask_type == "normal":
-            lengths = np.random.normal(mask_length, mask_other, size=num_mask)
-            lengths = [max(1, int(round(x))) for x in lengths]
-        elif mask_type == "poisson":
-            lengths = np.random.poisson(mask_length, size=num_mask)
-            lengths = [int(round(x)) for x in lengths]
-        else:
-            raise Exception("unknown mask selection " + mask_type)
-
-        if sum(lengths) == 0:
-            lengths[0] = min(mask_length, sz - 1)
-
-        if no_overlap:
-            mask_idc = []
-
-            def arrange(s, e, length, keep_length):
-                span_start = np.random.randint(s, e - length)
-                mask_idc.extend(span_start + i for i in range(length))
-
-                new_parts = []
-                if span_start - s - min_space >= keep_length:
-                    new_parts.append((s, span_start - min_space + 1))
-                if e - span_start - keep_length - min_space > keep_length:
-                    new_parts.append((span_start + length + min_space, e))
-                return new_parts
-
-            parts = [(0, sz)]
-            min_length = min(lengths)
-            for length in sorted(lengths, reverse=True):
-                lens = np.fromiter(
-                    (e - s if e - s >= length + min_space else 0 for s, e in parts),
-                    np.int,
-                )
-                l_sum = np.sum(lens)
-                if l_sum == 0:
-                    break
-                probs = lens / np.sum(lens)
-                c = np.random.choice(len(parts), p=probs)
-                s, e = parts.pop(c)
-                parts.extend(arrange(s, e, length, min_length))
-            mask_idc = np.asarray(mask_idc)
-        else:
-            min_len = min(lengths)
-            if sz - min_len <= num_mask:
-                min_len = sz - num_mask - 1
-
-            mask_idc = np.random.choice(sz - min_len, num_mask, replace=False)
-
-            mask_idc = np.asarray(
-                [
-                    mask_idc[j] + offset
-                    for j in range(len(mask_idc))
-                    for offset in range(lengths[j])
-                ]
-            )
-
-        mask_idcs.append(np.unique(mask_idc[mask_idc < sz]))
-
-    min_len = min([len(m) for m in mask_idcs])
-    for i, mask_idc in enumerate(mask_idcs):
-        if len(mask_idc) > min_len:
-            mask_idc = np.random.choice(mask_idc, min_len, replace=False)
-        mask[i, mask_idc] = True
-
-    return mask
 
 
 class WavLMConfig:
@@ -216,162 +85,51 @@ class WavLMConfig:
 
 
 class WavLM(nn.Module):
-    """WavLM model."""
+    """WavLM model. Output match is confirmed."""
 
     def __init__(self, cfg: WavLMConfig) -> None:
-        super().__init__()
-
-        logger.info(f"WavLM Config: {cfg.__dict__}")
+        super().__init__() # pyright: ignore [reportUnknownMemberType]
 
         self.cfg = cfg
-        feature_enc_layers = eval(cfg.conv_feature_layers)
-        self.embed = feature_enc_layers[-1][0]
+        feat_feature = 512
+        feat_enc_i = 1024
 
         self.feature_extractor = ConvFeatureExtractionModel()
+        self.layer_norm        = nn.LayerNorm(feat_feature)
+        self.post_extract_proj = nn.Linear(feat_feature, feat_enc_i)
+        self.dropout_input     = nn.Dropout(0.0)
+        self.encoder           = TransformerEncoder(cfg)
 
-        self.post_extract_proj = (
-            nn.Linear(self.embed, cfg.encoder_embed_dim)
-            if self.embed != cfg.encoder_embed_dim
-            else None
-        )
+        # Remnants (should be kept for backward compatibility)
+        self.dropout_features = nn.Dropout(0.0)
+        self.mask_emb = nn.Parameter(FloatTensor(feat_enc_i).uniform_())
 
-        self.mask_prob = cfg.mask_prob
-        self.mask_selection = cfg.mask_selection
-        self.mask_other = cfg.mask_other
-        self.mask_length = cfg.mask_length
-        self.no_mask_overlap = cfg.no_mask_overlap
-        self.mask_min_space = cfg.mask_min_space
+    def forward(self):
+        """Not used."""
+        raise RuntimeError("Not implemented.")
 
-        self.mask_channel_prob = cfg.mask_channel_prob
-        self.mask_channel_selection = cfg.mask_channel_selection
-        self.mask_channel_other = cfg.mask_channel_other
-        self.mask_channel_length = cfg.mask_channel_length
-        self.no_mask_channel_overlap = cfg.no_mask_channel_overlap
-        self.mask_channel_min_space = cfg.mask_channel_min_space
-
-        self.dropout_input = nn.Dropout(cfg.dropout_input)
-        self.dropout_features = nn.Dropout(cfg.dropout_features)
-
-        self.feature_grad_mult = cfg.feature_grad_mult
-
-        self.mask_emb = nn.Parameter(torch.FloatTensor(cfg.encoder_embed_dim).uniform_())
-
-        self.encoder = TransformerEncoder(cfg)
-        self.layer_norm = nn.LayerNorm(self.embed)
-
-    def apply_mask(self, x, padding_mask):
-        B, T, C = x.shape
-        if self.mask_prob > 0:
-            mask_indices = compute_mask_indices(
-                (B, T),
-                padding_mask,
-                self.mask_prob,
-                self.mask_length,
-                self.mask_selection,
-                self.mask_other,
-                min_masks=2,
-                no_overlap=self.no_mask_overlap,
-                min_space=self.mask_min_space,
-            )
-            mask_indices = torch.from_numpy(mask_indices).to(x.device)
-            x[mask_indices] = self.mask_emb
-        else:
-            mask_indices = None
-
-        if self.mask_channel_prob > 0:
-            mask_channel_indices = compute_mask_indices(
-                (B, C),
-                None,
-                self.mask_channel_prob,
-                self.mask_channel_length,
-                self.mask_channel_selection,
-                self.mask_channel_other,
-                no_overlap=self.no_mask_channel_overlap,
-                min_space=self.mask_channel_min_space,
-            )
-            mask_channel_indices = (
-                torch.from_numpy(mask_channel_indices)
-                .to(x.device)
-                .unsqueeze(1)
-                .expand(-1, T, -1)
-            )
-            x[mask_channel_indices] = 0
-
-        return x, mask_indices
-
-    def forward_padding_mask(
-            self, features: torch.Tensor, padding_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        extra = padding_mask.size(1) % features.size(1)
-        if extra > 0:
-            padding_mask = padding_mask[:, :-extra]
-        padding_mask = padding_mask.view(
-            padding_mask.size(0), features.size(1), -1
-        )
-        padding_mask = padding_mask.all(-1)
-        return padding_mask
-
-    def extract_features(
-        self,
-        source:            Tensor,
-        padding_mask:      Tensor | None = None,
-        mask:              bool          = False,
-        ret_conv:          bool          = False,
-        output_layer:      int    | None = None,
-        ret_layer_results: bool          = False,
-    ):
+    def extract_features(self, source: Tensor, output_layer: int | None = None) -> tuple[Tensor, Tensor, Tensor]:
         """Extract WavLM feature series.
         
         Args:
-            source :: (Channel, T) - The waveform
-            ret_conv               - Whether to return (intermediate) Conv output as feature series
-            output_layer           - Target transformer layer number (index+1)
-            ret_layer_results      - Whether to return Transformer intermediate layer's feature series
+            source        :: (B, T)           - The waveform
+            output_layer                      - Target transformer layer number (index+1)
+        Returns:
+            features      :: (B, Frame, Feat) -
+            x             :: (B, Frame, Feat) -
+            layer_results :: 
         """
 
-        # Conv
-        if self.feature_grad_mult > 0:
-            features = self.feature_extractor(source)
-            if self.feature_grad_mult != 1.0:
-                features = GradMultiply.apply(features, self.feature_grad_mult)
-        else:
-            with torch.no_grad():
-                features = self.feature_extractor(source)
-
-        # Norm
-        features = features.transpose(1, 2)
-        features = self.layer_norm(features)
-
-        # Masking : (B, T), bool
-        if padding_mask is not None:
-            padding_mask = self.forward_padding_mask(features, padding_mask)
-
-        # Projection
-        if self.post_extract_proj is not None:
-            features = self.post_extract_proj(features)
-
-        # Do
+        # Conv-LN-Proj-Do :: (B, T) -> (B, Feat, Frame) -> (B, Frame, Feat) -> (B, Frame, Feat) -> (B, Frame, Feat)
+        features = self.feature_extractor(source)
+        features = self.layer_norm(features.transpose(1, 2))
+        features = self.post_extract_proj(features)
         features = self.dropout_input(features)
 
-        # Masking : (B, T), bool
-        if mask:
-            x, mask_indices = self.apply_mask(features, padding_mask)
-        else:
-            x = features
+        # Transformer :: (B, Frame, Feat) -> (B, Frame, Feat) - Feature from target layer & Features from intermediate layers
+        x, layer_results = self.encoder(features, padding_mask=None, layer=None if output_layer is None else output_layer - 1)
 
-        # Transformer - Feature from target layer & Features from intermediate layers
-        x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=None if output_layer is None else output_layer - 1)
-
-        # feature: (B, T, D), float
-        # x: (B, T, D), float
-
-        res = { "x": x, "padding_mask": padding_mask, "features": features, }
-
-        feature = res["features"] if ret_conv else res["x"]
-        if ret_layer_results:
-            feature = (feature, layer_results)
-
-        return feature, res["padding_mask"]
+        return features, x, layer_results
 
 
 class ConvFeatureExtractionModel(nn.Module):
@@ -606,9 +364,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
 
     def forward(
             self,
-            x: torch.Tensor,
-            self_attn_mask: torch.Tensor = None,
-            self_attn_padding_mask: torch.Tensor = None,
+            x: Tensor,
+            self_attn_mask: Tensor = None,
+            self_attn_padding_mask: Tensor = None,
             need_weights: bool = False,
             pos_bias=None
     ):

@@ -42,18 +42,6 @@ class Fp32LayerNorm(nn.LayerNorm):
         return output.type_as(input)
 
 
-class GradMultiply(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x, scale):
-        ctx.scale = scale
-        res = x.new(x)
-        return res
-
-    @staticmethod
-    def backward(ctx, grad):
-        return grad * ctx.scale, None
-
-
 class SamePad(nn.Module):
     def __init__(self, kernel_size, causal=False):
         super().__init__()
