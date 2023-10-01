@@ -1,10 +1,6 @@
 dependencies = ['torch', 'torchaudio', 'numpy']
 
 import torch
-from torch import Tensor
-import torch.nn as nn
-import torch.nn.functional as F
-import logging
 import json
 from pathlib import Path
 
@@ -63,7 +59,7 @@ def wavlm_large(pretrained: bool = True, progress: bool = True, device: str = 'c
 
     if torch.cuda.is_available() == False:
         if str(device) != 'cpu':
-            logging.warning(f"Overriding device {device} to cpu since no GPU is available.")
+            print(f"Overriding device {device} to cpu since no GPU is available.")
             device = 'cpu'
 
     url_ckpt = f"{ckpt_base_url}/WavLM-Large.pt"

@@ -16,7 +16,6 @@ import numpy as np
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
-from torch.nn import LayerNorm
 from .modules import (
     Fp32GroupNorm,
     Fp32LayerNorm,
@@ -220,11 +219,9 @@ class WavLMConfig:
 class WavLM(nn.Module):
     """WavLM model."""
 
-    def __init__(
-        self,
-        cfg: WavLMConfig,
-    ) -> None:
+    def __init__(self, cfg: WavLMConfig) -> None:
         super().__init__()
+
         logger.info(f"WavLM Config: {cfg.__dict__}")
 
         self.cfg = cfg
@@ -266,7 +263,7 @@ class WavLM(nn.Module):
         self.mask_emb = nn.Parameter(torch.FloatTensor(cfg.encoder_embed_dim).uniform_())
 
         self.encoder = TransformerEncoder(cfg)
-        self.layer_norm = LayerNorm(self.embed)
+        self.layer_norm = nn.LayerNorm(self.embed)
 
     def apply_mask(self, x, padding_mask):
         B, T, C = x.shape
@@ -410,9 +407,7 @@ class ConvFeatureExtractionModel(nn.Module):
                 nn.init.kaiming_normal_(conv.weight)
                 return conv
 
-            assert (
-                           is_layer_norm and is_group_norm
-                   ) == False, "layer norm and group norm are exclusive"
+            assert (is_layer_norm and is_group_norm) == False, "layer norm and group norm are exclusive"
 
             if is_layer_norm:
                 return nn.Sequential(
@@ -463,9 +458,9 @@ class ConvFeatureExtractionModel(nn.Module):
                 (dim, k, stride) = cl
 
                 self.conv_layers.append(
-                    torch.nn.Conv2d(in_d, dim, k, stride)
+                    nn.Conv2d(in_d, dim, k, stride)
                 )
-                self.conv_layers.append(torch.nn.ReLU())
+                self.conv_layers.append(nn.ReLU())
                 in_d = dim
         elif self.conv_type == "custom":
             in_d = 1
@@ -475,16 +470,16 @@ class ConvFeatureExtractionModel(nn.Module):
                 assert len(cl) == 3
                 (dim, k, stride) = cl
                 self.conv_layers.append(
-                    torch.nn.Conv2d(in_d, dim, k, stride, padding=1)
+                    nn.Conv2d(in_d, dim, k, stride, padding=1)
                 )
                 self.conv_layers.append(
-                    torch.nn.LayerNorm([dim, idim])
+                    nn.LayerNorm([dim, idim])
                 )
-                self.conv_layers.append(torch.nn.ReLU())
+                self.conv_layers.append(nn.ReLU())
                 in_d = dim
                 if (i + 1) % 2 == 0:
                     self.conv_layers.append(
-                        torch.nn.MaxPool2d(2, stride=2, ceil_mode=True)
+                        nn.MaxPool2d(2, stride=2, ceil_mode=True)
                     )
                     idim = int(math.ceil(idim / 2))
         else:
@@ -568,7 +563,7 @@ class TransformerEncoder(nn.Module):
         )
 
         self.layer_norm_first = args.layer_norm_first
-        self.layer_norm = LayerNorm(self.embedding_dim)
+        self.layer_norm = nn.LayerNorm(self.embedding_dim)
         self.layerdrop = args.encoder_layerdrop
 
         self.apply(init_bert_params)
@@ -692,7 +687,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.layer_norm_first = layer_norm_first
 
         # layer norm associated with the self attention layer
-        self.self_attn_layer_norm = LayerNorm(self.embedding_dim)
+        self.self_attn_layer_norm = nn.LayerNorm(self.embedding_dim)
 
         if self.activation_name == "glu":
             self.fc1 = GLU_Linear(self.embedding_dim, ffn_embedding_dim, "swish")
@@ -701,7 +696,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.fc2 = nn.Linear(ffn_embedding_dim, self.embedding_dim)
 
         # layer norm associated with the position wise feed-forward NN
-        self.final_layer_norm = LayerNorm(self.embedding_dim)
+        self.final_layer_norm = nn.LayerNorm(self.embedding_dim)
 
     def forward(
             self,

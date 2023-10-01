@@ -11,15 +11,14 @@ import json
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DistributedSampler, DataLoader
-from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader
 from torch.cuda.amp.grad_scaler import GradScaler
 from fastprogress import master_bar, progress_bar
 
 from .utils import AttrDict, build_env
 from .meldataset import MelDataset, mel_spectrogram, get_dataset_filelist, LogMelSpectrogram
 from .models import Generator, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss, discriminator_loss                                                                       # [Diff] relative import
-from .utils import plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
+from .utils import scan_checkpoint, load_checkpoint, save_checkpoint
 
 
 torch.backends.cudnn.benchmark = True
@@ -193,11 +192,9 @@ def train(a, h):
                         if j <= 4:
                             if steps == 0:
                                 sw.add_audio('gt/y_{}'.format(j), y[0], steps, h.sampling_rate)
-                                sw.add_figure('gt/y_spec_{}'.format(j), plot_spectrogram(x[0]), steps)
 
                             sw.add_audio('generated/y_hat_{}'.format(j), y_g_hat[0], steps, h.sampling_rate)
                             y_hat_spec = alt_melspec(y_g_hat.squeeze(1))
-                            sw.add_figure('generated/y_hat_spec_{}'.format(j), plot_spectrogram(y_hat_spec.squeeze(0).cpu().numpy()), steps)
 
                     val_err = val_err_tot / (j+1)
                     sw.add_scalar("validation/mel_spec_error", val_err, steps)
